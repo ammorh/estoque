@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Estoque Ammo</title>
+    <script src="https://unpkg.com/html5-qrcode"></script>
+    <style>
+        body { font-family: 'Segoe UI', sans-serif; background: #eef2f7; margin: 0; padding: 15px; }
+        .card { max-width: 450px; margin: auto; background: white; padding: 20px; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); }
+        h2 { color: #003366; text-align: center; margin-top: 0; }
+        input, select, button { width: 100%; padding: 12px; margin: 8px 0; border-radius: 8px; border: 1px solid #ccc; box-sizing: border-box; font-size: 16px; }
+        button { background: #003366; color: white; border: none; font-weight: bold; cursor: pointer; transition: 0.2s; }
+        button:disabled { background: #999; }
+        .hidden { display: none; }
+        #reader { width: 100%; border-radius: 10px; overflow: hidden; margin-top: 15px; background: #f8f9fa; border: 2px dashed #bbb; }
+        #status { text-align: center; font-weight: bold; margin-top: 10px; color: #28a745; min-height: 24px; }
+        .admin-box { background: #f0f0f0; padding: 10px; border-radius: 8px; margin-top: 15px; border: 1px dashed #999; }
+        .user-label { font-size: 0.8em; color: #666; text-align: right; margin-bottom: 10px; }
+    </style>
+</head>
+<body>
+
+<div class="card" id="loginArea">
+    <h2>Sistema AMMO</h2>
+    <input type="text" id="user" placeholder="Usuário">
+    <input type="password" id="pass" placeholder="Senha">
+    <button id="btn-login" onclick="fazerLogin()">ENTRAR NO SISTEMA</button>
+</div>
+
+<div class="card hidden" id="mainApp">
+    <div class="user-label">Logado como: <b id="displayUser"></b></div>
+    
+    <label>Operação:</label>
+    <select id="tipo">
+        <option value="CONFERENCIA">CONFERÊNCIA (Entrada)</option>
+        <option value="VENDA">BAIXA DE VENDA</option>
+    </select>
+
+    <label>Grife:</label>
+    <select id="marca" onchange="document.getElementById('outraMarca').classList.toggle('hidden', this.value !== 'OUTRA')">
+        <option value="AMMO">AMMO</option>
+        <option value="RAY-BAN">RAY-BAN</option>
+        <option value="OAKLEY">OAKLEY</option>
+        <option value="OUTRA">-- OUTRA MARCA (DIGITAR) --</option>
+    </select>
+    <input type="text" id="outraMarca" class="hidden" placeholder="Nome da nova grife">
+
+    <div id="reader"></div>
+    <div id="status">Aguardando login para ativar câmera...</div>
+
+    <div id="adminPanel" class="hidden">
+        <div class="admin-box">
+            <h4 style="margin:0 0 10px 0">Painel do Gestor</h4>
+            <input type="text" id="novoColab" placeholder="Nome do novo colaborador">
+            <input type="text" id="novaSenha" placeholder="Senha de acesso">
+            <button onclick="cadastrar()" style="background:#28a745">CADASTRAR ACESSO</button>
+        </div>
+    </div>
+</div>
+
+<script>
+    // =========================================================
+    // LINK DA SUA API NO GOOGLE APPS SCRIPT
+    const WEB_APP_URL = "https://script.google.com/macros/s/AKfycbxk9G3eEoeS28cJbeL3ZWZpc9-Izg3slWp62nZDl2X_DlM31dNaksI9B9nl70uNS4N-/exec"; 
+    // =========================================================
+
+    let userAtivo = "";
+    let html5QrCode;
+    const audioBeep = new Audio('https://www.soundjay.com/button/beep-07.wav');
+
+    // Função central para se comunicar com o Google Apps Script
+    async function enviarParaAPI(payload) {
+        try {
+            const resposta = await fetch(WEB_APP_URL, {
+                method: "POST",
+                headers: { "Content-Type": "text/plain;charset=utf-8" }, 
+                body: JSON.stringify(payload)
+            });
+            return await resposta.json();
+        } catch (erro) {
+            console.error("Erro na API:", erro);
+            alert("Erro de conexão. Verifique a internet ou o URL do script.");
+            return null;
+        }
+    }
+
+    async function fazerLogin() {
+        const u = document.getElementById('user').value;
+        const p = document.getElementById('pass').value;
+        const btn = document.getElementById('btn-login');
+        
+        btn.innerText = "Aguarde...";
+        btn.disabled = true;
+        
+        const res = await enviarParaAPI({ acao: "login", usuario: u, senha: p });
+        
+        btn.innerText = "ENTRAR NO SISTEMA";
+        btn.disabled = false;
+
+        if (res && res.sucesso) {
+            userAtivo = u;
+            document.getElementById('loginArea').classList.add('hidden');
+            document.getElementById('mainApp').classList.remove('hidden');
+            document.getElementById('displayUser').innerText = u;
+            
+            if(u.toLowerCase() === "alexandre") {
+                document.getElementById('adminPanel').classList.remove('hidden');
+            }
+            iniciarCameraForcado();
+        } else {
+            alert("Acesso Negado! Usuário ou senha incorretos.");
+        }
+    }
+
+    async function onScanSuccess(text) {
+        audioBeep.play(); 
+        
+        const m = document.getElementById('marca').value;
+        const marcaFinal = (m === "OUTRA") ? document.getElementById('outraMarca').value : m;
+        
+        if(!marcaFinal) { alert("Informe a marca!"); return; }
+
+        const dadosLancamento = {
+            usuario: userAtivo,
+            marca: marcaFinal,
+            referencia: text,
+            tipo: document.getElementById('tipo').value
+        };
+
+        document.getElementById('status').innerText = "Enviando: " + text;
+
+        const res = await enviarParaAPI({ acao: "salvar", dados: dadosLancamento });
+
+        if (res && res.sucesso) {
+            document.getElementById('status').innerHTML = "<span style='color:green'>✔ " + text + " LANÇADO!</span>";
+            setTimeout(() => { document.getElementById('status').innerText = "Pronto para próxima leitura..."; }, 2500);
+        }
+    }
+
+    function iniciarCameraForcado() {
+        html5QrCode = new Html5Qrcode("reader");
+        const config = { fps: 20, qrbox: { width: 250, height: 250 }, aspectRatio: 1.0 };
+
+        html5QrCode.start( { facingMode: { exact: "environment" } }, config, onScanSuccess )
+        .then(() => { document.getElementById('status').innerText = "Câmera Ativa. Aponte para a etiqueta."; })
+        .catch(err => {
+            html5QrCode.start({ facingMode: "environment" }, config, onScanSuccess)
+            .then(() => { document.getElementById('status').innerText = "Câmera Ativa. Aponte para a etiqueta."; })
+            .catch(e => { document.getElementById('status').innerHTML = "<span style='color:red'>Erro de Permissão. Libere a câmera no navegador.</span>"; });
+        });
+    }
+
+    async function cadastrar() {
+        const nc = document.getElementById('novoColab').value;
+        const ns = document.getElementById('novaSenha').value;
+        if(!nc || !ns) { alert("Preencha todos os campos do gestor!"); return; }
+        
+        const res = await enviarParaAPI({ acao: "cadastrar", novoUser: nc, novaSenha: ns });
+        
+        if (res && res.sucesso) {
+            alert(res.mensagem);
+            document.getElementById('novoColab').value = "";
+            document.getElementById('novaSenha').value = "";
+        }
+    }
+</script>
+</body>
+</html>
