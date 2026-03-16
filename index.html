@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Estoque Ammo - Leitor de Texto</title>
+    <title>Estoque Ammo - Leitor Pro</title>
     <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
     <style>
         body { font-family: 'Segoe UI', sans-serif; background: #eef2f7; margin: 0; padding: 15px; }
@@ -12,16 +12,22 @@
         input, select, button { width: 100%; padding: 12px; margin: 8px 0; border-radius: 8px; border: 1px solid #ccc; box-sizing: border-box; font-size: 16px; }
         button { background: #003366; color: white; border: none; font-weight: bold; cursor: pointer; transition: 0.2s; }
         button:disabled { background: #999; cursor: not-allowed; }
-        .btn-acao { background: #28a745; margin-top: 15px; }
-        .btn-captura { background: #ff9900; color: #000; font-size: 18px; padding: 15px; }
+        .btn-acao { background: #28a745; margin-top: 15px; padding: 15px; }
+        .btn-captura { background: #ff9900; color: #000; font-size: 18px; padding: 18px; }
         .hidden { display: none !important; }
-        #video-container { position: relative; width: 100%; border-radius: 10px; overflow: hidden; margin-top: 15px; border: 2px solid #ccc; background: #000; }
-        video { width: 100%; display: block; }
-        /* Mira central para ajudar o estocista a focar na etiqueta */
-        .mira { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); width: 80%; height: 50px; border: 2px solid rgba(255, 255, 0, 0.7); box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.5); pointer-events: none; }
-        #status { text-align: center; font-weight: bold; margin-top: 10px; color: #003366; min-height: 24px; }
+        
+        #video-container { position: relative; width: 100%; border-radius: 10px; overflow: hidden; margin-top: 15px; background: #000; display: flex; justify-content: center; align-items: center; }
+        video { width: 100%; display: block; object-fit: cover; }
+        
+        /* Mira otimizada para capturar apenas uma linha de texto */
+        .mira { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); width: 80%; height: 60px; border: 3px solid rgba(255, 204, 0, 0.9); box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.6); pointer-events: none; border-radius: 5px; }
+        
+        #status { text-align: center; font-weight: bold; margin-top: 15px; color: #003366; min-height: 24px; font-size: 14px; }
         #area-edicao { background: #e6f6ea; padding: 15px; border-radius: 8px; border: 1px solid #28a745; margin-top: 15px; }
         .user-label { font-size: 0.8em; color: #666; text-align: right; margin-bottom: 10px; }
+        
+        /* Canvas de debug para vermos como a IA está enxergando a imagem */
+        #preview-ia { width: 100%; margin-top: 10px; border: 1px solid #ccc; border-radius: 5px; }
     </style>
 </head>
 <body>
@@ -47,7 +53,7 @@
         <option value="AMMO">AMMO</option>
         <option value="RAY-BAN">RAY-BAN</option>
         <option value="OAKLEY">OAKLEY</option>
-        <option value="OUTRA">-- OUTRA MARCA (DIGITAR) --</option>
+        <option value="OUTRA">-- OUTRA MARCA --</option>
     </select>
     <input type="text" id="outraMarca" class="hidden" placeholder="Nome da nova grife">
 
@@ -57,27 +63,29 @@
     </div>
     
     <button id="btn-capturar" class="btn-captura" onclick="capturarEExtrairTexto()">📸 LER ETIQUETA</button>
-    <div id="status">Aponte a etiqueta dentro do quadro amarelo.</div>
+    <div id="status">Aproxime até a referência preencher o quadro amarelo.</div>
 
     <div id="area-edicao" class="hidden">
-        <label style="color:#28a745; font-weight:bold;">Confirme a Referência:</label>
-        <input type="text" id="texto-extraido" style="text-transform: uppercase; font-size: 18px; text-align: center; font-weight: bold;">
+        <label style="color:#28a745; font-weight:bold; font-size: 14px;">O que a IA enxergou (Filtro P&B):</label>
+        <canvas id="preview-ia"></canvas>
+        
+        <label style="color:#003366; font-weight:bold; display:block; margin-top:10px;">Referência para salvar:</label>
+        <input type="text" id="texto-extraido" style="text-transform: uppercase; font-size: 22px; text-align: center; font-weight: bold; letter-spacing: 1px;">
+        
         <button id="btn-salvar" class="btn-acao" onclick="enviarLançamento()">✔ CONFIRMAR E SALVAR</button>
-        <button onclick="descartarLeitura()" style="background: #dc3545; margin-top: 5px;">✖ TENTAR NOVAMENTE</button>
+        <button onclick="descartarLeitura()" style="background: #dc3545; margin-top: 10px; padding: 12px;">✖ REFAZER FOTO</button>
     </div>
 
-    <canvas id="canvas" class="hidden"></canvas>
+    <canvas id="canvas-oculto" class="hidden"></canvas>
 </div>
 
 <script>
     // =========================================================
-    // COLE SEU LINK DO GOOGLE APPS SCRIPT AQUI ABAIXO:
     const WEB_APP_URL = "https://script.google.com/macros/s/AKfycbxk9G3eEoeS28cJbeL3ZWZpc9-Izg3slWp62nZDl2X_DlM31dNaksI9B9nl70uNS4N-/exec"; 
     // =========================================================
 
     let userAtivo = "";
     const video = document.getElementById('camera');
-    const canvas = document.getElementById('canvas');
     const audioBeep = new Audio('https://www.soundjay.com/button/beep-07.wav');
 
     async function enviarParaAPI(payload) {
@@ -88,10 +96,7 @@
                 body: JSON.stringify(payload)
             });
             return await resposta.json();
-        } catch (erro) {
-            console.error(erro);
-            return null;
-        }
+        } catch (erro) { return null; }
     }
 
     async function fazerLogin() {
@@ -99,13 +104,9 @@
         const p = document.getElementById('pass').value;
         const btn = document.getElementById('btn-login');
         
-        btn.innerText = "Aguarde...";
-        btn.disabled = true;
-        
+        btn.innerText = "Aguarde..."; btn.disabled = true;
         const res = await enviarParaAPI({ acao: "login", usuario: u, senha: p });
-        
-        btn.innerText = "ENTRAR NO SISTEMA";
-        btn.disabled = false;
+        btn.innerText = "ENTRAR NO SISTEMA"; btn.disabled = false;
 
         if (res && res.sucesso) {
             userAtivo = u;
@@ -113,68 +114,82 @@
             document.getElementById('mainApp').classList.remove('hidden');
             document.getElementById('displayUser').innerText = u;
             iniciarCamera();
-        } else {
-            alert("Acesso Negado!");
-        }
+        } else { alert("Acesso Negado!"); }
     }
 
     function iniciarCamera() {
+        // Pede a câmera traseira com a maior resolução possível para ler letras pequenas
         navigator.mediaDevices.getUserMedia({ 
-            video: { facingMode: "environment", width: { ideal: 1280 }, height: { ideal: 720 } } 
+            video: { facingMode: "environment", width: { ideal: 1920 }, height: { ideal: 1080 } } 
         })
         .then(stream => { video.srcObject = stream; })
-        .catch(err => { 
-            document.getElementById('status').innerHTML = "<span style='color:red'>Erro ao acessar a câmera.</span>"; 
-        });
+        .catch(err => { document.getElementById('status').innerText = "Erro na câmera."; });
     }
 
     async function capturarEExtrairTexto() {
         const btnCap = document.getElementById('btn-capturar');
         const status = document.getElementById('status');
         
-        // Configura o canvas para o tamanho do vídeo
-        canvas.width = video.videoWidth;
-        canvas.height = video.videoHeight;
+        // 1. Calcula o recorte exato do retângulo amarelo (mira)
+        const videoW = video.videoWidth;
+        const videoH = video.videoHeight;
         
-        // Tira a foto
-        const ctx = canvas.getContext('2d');
-        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-        
-        // Toca o som de clique/captura
-        audioBeep.play();
+        // A mira tem 80% da largura da tela e altura fixa
+        const cropW = videoW * 0.8;
+        const cropH = videoH * 0.2; // Pega uma faixa central fina
+        const startX = (videoW - cropW) / 2;
+        const startY = (videoH - cropH) / 2;
 
+        // 2. Prepara o canvas oculto e o preview
+        const canvasOculto = document.getElementById('canvas-oculto');
+        const canvasPreview = document.getElementById('preview-ia');
+        
+        canvasOculto.width = cropW; canvasOculto.height = cropH;
+        canvasPreview.width = cropW; canvasPreview.height = cropH;
+        
+        const ctxOculto = canvasOculto.getContext('2d');
+        const ctxPreview = canvasPreview.getContext('2d');
+
+        // 3. Aplica o filtro de altíssimo contraste (Preto e Branco)
+        ctxOculto.filter = 'grayscale(100%) contrast(250%) brightness(120%)';
+        
+        // 4. Desenha apenas o pedaço da mira no canvas
+        ctxOculto.drawImage(video, startX, startY, cropW, cropH, 0, 0, cropW, cropH);
+        
+        // Copia para o preview para o usuário ver o que a IA vai ler
+        ctxPreview.drawImage(canvasOculto, 0, 0);
+
+        audioBeep.play();
         btnCap.disabled = true;
-        btnCap.innerText = "Processando Imagem... Aguarde";
-        status.innerText = "A Inteligência Artificial está lendo o texto...";
+        btnCap.innerText = "Lendo Letras... Aguarde";
+        status.innerText = "Extraindo referência...";
 
         try {
-            // Usa o Tesseract (IA) para ler a imagem
-            // 'eng' (inglês) costuma ser melhor e mais rápido para códigos alfanuméricos puros
-            const result = await Tesseract.recognize(canvas, 'eng');
+            // 5. Envia a imagem tratada para o Tesseract com bloqueio de caracteres
+            const result = await Tesseract.recognize(canvasOculto, 'eng', {
+                tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 -/', // Só aceita isso
+                tessedit_pageseg_mode: '7' // Modo 7: Trata a imagem como uma única linha de texto
+            });
             
-            // Limpa o texto: tira quebras de linha e espaços duplos
-            let textoLido = result.data.text.replace(/\n/g, ' ').trim();
-            
-            // Pega apenas letras, números e traços
-            textoLido = textoLido.replace(/[^A-Za-z0-9- ]/g, '');
+            let textoLido = result.data.text.trim();
+            textoLido = textoLido.replace(/[^A-Z0-9-]/g, ''); // Limpeza final pesada
 
-            if (textoLido.length > 1) {
-                // Esconde a câmera e mostra a área de edição
+            if (textoLido.length >= 3) {
                 document.getElementById('video-container').classList.add('hidden');
                 btnCap.classList.add('hidden');
-                
                 document.getElementById('area-edicao').classList.remove('hidden');
-                document.getElementById('texto-extraido').value = textoLido.toUpperCase();
-                status.innerText = "Edite o texto se necessário e confirme.";
+                
+                document.getElementById('texto-extraido').value = textoLido;
+                status.innerText = "Confira a leitura e ajuste se necessário.";
             } else {
-                status.innerText = "Não consegui ler. Tente aproximar mais.";
+                status.innerText = "Leitura fraca. Limpe a lente ou chegue mais perto.";
                 btnCap.disabled = false;
                 btnCap.innerText = "📸 TENTAR DE NOVO";
             }
         } catch (erro) {
-            status.innerText = "Erro ao processar imagem.";
+            status.innerText = "Falha no processador de imagem.";
             btnCap.disabled = false;
-            btnCap.innerText = "📸 LER ETIQUETA";
+            btnCap.innerText = "📸 TENTAR DE NOVO";
         }
     }
 
@@ -186,11 +201,11 @@
         btnCap.classList.remove('hidden');
         btnCap.disabled = false;
         btnCap.innerText = "📸 LER ETIQUETA";
-        document.getElementById('status').innerText = "Aponte a etiqueta dentro do quadro amarelo.";
+        document.getElementById('status').innerText = "Aproxime até a referência preencher o quadro amarelo.";
     }
 
     async function enviarLançamento() {
-        const textoFinal = document.getElementById('texto-extraido').value;
+        const textoFinal = document.getElementById('texto-extraido').value.trim();
         if (!textoFinal) { alert("A referência não pode estar vazia!"); return; }
 
         const m = document.getElementById('marca').value;
@@ -201,22 +216,17 @@
         btnSalvar.disabled = true;
         btnSalvar.innerText = "Salvando...";
 
-        const dadosLancamento = {
-            usuario: userAtivo,
-            marca: marcaFinal,
-            referencia: textoFinal,
-            tipo: document.getElementById('tipo').value
-        };
+        const dadosLancamento = { usuario: userAtivo, marca: marcaFinal, referencia: textoFinal, tipo: document.getElementById('tipo').value };
 
         const res = await enviarParaAPI({ acao: "salvar", dados: dadosLancamento });
 
         if (res && res.sucesso) {
-            alert("Etiqueta lançada com sucesso!");
-            descartarLeitura(); // Volta para a câmera automaticamente
+            alert("Referência gravada no estoque!");
+            descartarLeitura(); 
             btnSalvar.disabled = false;
             btnSalvar.innerText = "✔ CONFIRMAR E SALVAR";
         } else {
-            alert("Erro ao salvar no banco. Verifique a internet.");
+            alert("Erro de conexão com a planilha.");
             btnSalvar.disabled = false;
             btnSalvar.innerText = "✔ TENTAR SALVAR NOVAMENTE";
         }
